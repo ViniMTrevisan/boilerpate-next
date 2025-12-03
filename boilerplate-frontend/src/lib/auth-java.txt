@@ -1,0 +1,79 @@
+import NextAuth, { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import axios from "axios"; // <--- Importe o axios direto aqui!
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          throw new Error("Missing credentials");
+        }
+
+        try {
+          // AQUI ESTÁ A CORREÇÃO:
+          // 1. Usamos a URL absoluta vinda do .env (http://localhost:8080)
+          // 2. Batemos direto no backend Java
+          // 3. Enviamos JSON puro (o axios faz isso por padrão se passar objeto)
+          
+          console.log("Tentando logar em:", `${process.env.API_URL}/auth/login`);
+          
+          const response = await axios.post(
+            `${process.env.API_URL}/auth/login`, 
+            {
+              email: credentials.email,
+              password: credentials.password,
+            },
+            {
+              headers: {
+                "Content-Type": "application/json", // Garantindo que o Java entenda
+              },
+            }
+          );
+
+          const user = response.data;
+
+          // O Java pode retornar 'accessToken' (camelCase) ou 'access_token' (snake_case)
+          // Vamos garantir que pegamos o certo
+          if (user && (user.accessToken || user.access_token)) {
+             // Normaliza para o que o NextAuth espera
+             return {
+                 ...user,
+                 accessToken: user.accessToken || user.access_token
+             };
+          }
+          
+          return null;
+
+        } catch (error: any) {
+          console.error("Erro no Login:", error.response?.data || error.message);
+          return null;
+        }
+      },
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        // Salva o token que veio do Java dentro do token do NextAuth
+        token.accessToken = (user as any).accessToken;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (token) {
+        // Passa o token para a sessão do front
+        (session as any).user.accessToken = token.accessToken;
+      }
+      return session;
+    },
+  },
+  pages: {
+    signIn: "/login",
+  },
+};
